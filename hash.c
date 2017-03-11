@@ -1,8 +1,7 @@
 #include "params.h"
 #include "hash.h"
 
-#include "blake256/ref/hash.h"
-#include "blake512/ref/hash.h"
+#include "crypto_generichash.h"
 
 extern void chacha_perm_asm(unsigned char* out, const unsigned char* in);
 
@@ -10,13 +9,13 @@ extern void chacha_perm_asm(unsigned char* out, const unsigned char* in);
 
 int varlen_hash(unsigned char *out,const unsigned char *in,unsigned long long inlen)
 {
-  crypto_hash_blake256(out,in,inlen);
+  crypto_generichash(out,32, in,inlen, NULL, 0);
   return 0;
 }
 
 int msg_hash(unsigned char *out,const unsigned char *in,unsigned long long inlen)
 {
-  crypto_hash_blake512(out,in,inlen);
+  crypto_generichash(out, 64, in,inlen, NULL, 0);
   return 0;
 }
 
