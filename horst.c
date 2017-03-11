@@ -3,11 +3,10 @@
 #include "hash.h"
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h> 
+#include <stdlib.h>
 #include <string.h>
-#include "crypto_stream_chacha12.h"
-#include "chacha12/e/ref/e/ecrypt-sync.h"
-#include "stm32wrapper.h"
+#include "crypto_stream_chacha20.h"
+#include "chacha20/e/ref/e/ecrypt-sync.h"
 
 void update_sig(const unsigned int *idxlist, const unsigned short *sigposlist, node *N, unsigned char* buf, unsigned short *boffset)
 {
@@ -113,9 +112,10 @@ void addtoroundnumlist(unsigned short *roundnumlist, unsigned short *roundnumpos
   }
 }
 
-int horst_sign(unsigned char pk[HASH_BYTES],
-               const unsigned char seed[SEED_BYTES], 
-               const unsigned char masks[2*HORST_LOGT*HASH_BYTES], 
+int horst_sign(unsigned char *sig,
+               unsigned char pk[HASH_BYTES],
+               const unsigned char seed[SEED_BYTES],
+               const unsigned char masks[2*HORST_LOGT*HASH_BYTES],
                const unsigned char m_hash[MSGHASH_BYTES])
 {
   #if HORST_SKBYTES != HASH_BYTES
@@ -149,7 +149,7 @@ int horst_sign(unsigned char pk[HASH_BYTES],
   }
 
   ECRYPT_ctx x;
-  crypto_stream_chacha12_setup(&x, 0, seed);
+  crypto_stream_chacha20_setup(&x, 0, seed);
 
   sigpos += 64*HASH_BYTES; // reserve room for 64 hashes of level 10
 
@@ -188,13 +188,12 @@ int horst_sign(unsigned char pk[HASH_BYTES],
   int stackptr = -1;
 
   unsigned char sk[64];
-  unsigned char buf[HASH_BYTES*(HORST_LOGT-5)*2];
+  unsigned char buf[HASH_BYTES*(HORST_LOGT-5)];
   unsigned short boffset = 0;
-  unsigned short sendoff = 0;
   for (i=0; i < HORST_T; i++) //generate leafs for the pubkeys along the bottom
   {
     if ((i&1) == 0) {
-      crypto_stream_chacha12_64b(&x, sk);
+      crypto_stream_chacha20_64b(&x, sk);
     }
     indic = 0x0400; // always store layer 6
     if (roundnumlist[roundnumpos] == i) {
@@ -202,32 +201,35 @@ int horst_sign(unsigned char pk[HASH_BYTES],
       roundnumpos += 2;
     }
     treehash(idxlist, sigposlist, sk + (i&1)*HORST_SKBYTES, th_stack, &stackptr, i, masks, indic, buf, &boffset);
-    if (boffset > sendoff) {
-      while (!dma_done()); dma_transmit(buf+sendoff, boffset-sendoff);
-      if (sendoff > 0) {
-        boffset = 0;
-        sendoff = 0;
-      }
-      else {
-        sendoff = HASH_BYTES*(HORST_LOGT-5);
-        boffset = sendoff;
+    unsigned int i2;
+    unsigned short pos2;
+    for(i2=0;i2<boffset;) {
+      pos2=(buf[i2] << 8) | buf[i2+1];
+      memcpy(sig+pos2, buf+i2+2, HASH_BYTES);
+      i2+=HASH_BYTES+2;
+      if(i2<HASH_BYTES+2 && i2>0) {
       }
     }
+    boffset=0;
   }
 
   for(i=0;i<HASH_BYTES;i++)
     pk[i] = th_stack[0].hash[i];
 
-  while (!dma_done());
   return 0;
 }
 
-int horst_verify(unsigned char *pk, const unsigned char masks[2*HORST_LOGT*HASH_BYTES], const unsigned char m_hash[MSGHASH_BYTES])
+int horst_verify(unsigned char* sig,
+                 unsigned char *pk,
+                 const unsigned char masks[2*HORST_LOGT*HASH_BYTES],
+                 const unsigned char m_hash[MSGHASH_BYTES])
 {
-  unsigned char buffer[HASH_BYTES*(HORST_LOGT-6+1) * 2];
+  //unsigned char buffer[HASH_BYTES*(HORST_LOGT-6+1) * 2];
+  unsigned char *buffer = sig + (64 * HASH_BYTES);
   unsigned char *l, *r, *bufp, *bufstart;
   unsigned char hashbuf[HASH_BYTES];
-  unsigned char level10[64*HASH_BYTES];
+  //unsigned char level10[64*HASH_BYTES];
+  unsigned char *level10 = sig;
   unsigned int idx;
   int i,j,k;
 
@@ -235,14 +237,14 @@ int horst_verify(unsigned char *pk, const unsigned char masks[2*HORST_LOGT*HASH_
 #error "Need to have HORST_K == (MSGHASH_BYTES/2)"
 #endif
 
-  dma_request(level10, 64*HASH_BYTES); while (!dma_done());
-  dma_request(buffer, HASH_BYTES*(HORST_LOGT-6+1)); while (!dma_done());
+  //dma_request(level10, 64*HASH_BYTES);
+  //dma_request(buffer, HASH_BYTES*(HORST_LOGT-6+1));
 
   for(i=0;i<HORST_K;i++)
   {
-    if (i != 31)
-      dma_request(buffer + HASH_BYTES*(HORST_LOGT-6+1) * (1 - (i & 1)), HASH_BYTES*(HORST_LOGT-6+1));
-    bufstart = buffer + HASH_BYTES*(HORST_LOGT-6+1) * (i & 1);
+    //if (i != 31)
+    //  dma_request(buffer + HASH_BYTES*(HORST_LOGT-6+1) * (1 - (i & 1)), HASH_BYTES*(HORST_LOGT-6+1));
+    bufstart = buffer;
     idx = m_hash[2*i] + (m_hash[2*i+1]<<8);
 
 #if HORST_SKBYTES != HASH_BYTES
@@ -285,9 +287,10 @@ int horst_verify(unsigned char *pk, const unsigned char masks[2*HORST_LOGT*HASH_
     hash_nn_n_mask(bufstart,l, r,masks+2*(HORST_LOGT-7)*HASH_BYTES);
 
     for(k=0;k<HASH_BYTES;k++)
-      if(level10[idx*HASH_BYTES+k] != bufstart[k])
+      if(level10[idx*HASH_BYTES+k] != bufstart[k]) {
         goto fail;
-    while (!dma_done());
+      }
+    buffer += HASH_BYTES*(HORST_LOGT-6+1);
   }
 
   // Compute root from level10

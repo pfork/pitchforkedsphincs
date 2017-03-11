@@ -3,21 +3,18 @@
 #include <string.h>
 
 #include "api.h"
-#include "zerobytes.h"
 #include "params.h"
 #include "wots.h"
 #include "horst.h"
 #include "hash.h"
-#include "stm32wrapper.h"
-#include "blake512/ref/hash.h"
+#include "crypto_generichash.h"
+#include "randombytes_pitchfork.h"
 
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
 #define BIGINT_BYTES ((TOTALTREE_HEIGHT-SUBTREE_HEIGHT+7)/8)
 
-// unfortunately this cannot be much higher, as blake512_update does not
-// seem to support updates of 1024 bits or more, after the first one
 #define MBLOCKSIZE 64
 
 #if (TOTALTREE_HEIGHT-SUBTREE_HEIGHT) > 64
@@ -175,7 +172,7 @@ static void validate_authpath(unsigned char root[HASH_BYTES], const unsigned cha
 }
 
 
-static void compute_authpath_wots(unsigned char root[HASH_BYTES], const leafaddr *a, const unsigned char *sk, const unsigned char *masks, unsigned int height)
+static void compute_authpath_wots(unsigned char root[HASH_BYTES], const leafaddr *a, const unsigned char *sk, const unsigned char *masks, unsigned int height, unsigned char *authpath)
 {
   int i, idx, j;
   leafaddr ta = *a;
@@ -209,70 +206,28 @@ static void compute_authpath_wots(unsigned char root[HASH_BYTES], const leafaddr
 
   // copy authpath
   for(i=0;i<height;i++) {
-    while (!dma_done()); dma_transmit(tree + ((1<<SUBTREE_HEIGHT)>>i)*HASH_BYTES + ((idx >> i) ^ 1) * HASH_BYTES, HASH_BYTES);
+    memcpy(authpath + i*HASH_BYTES, tree + ((1<<SUBTREE_HEIGHT)>>i)*HASH_BYTES + ((idx >> i) ^ 1) * HASH_BYTES, HASH_BYTES);
+    //dma_transmit(                     tree + ((1<<SUBTREE_HEIGHT)>>i)*HASH_BYTES + ((idx >> i) ^ 1) * HASH_BYTES, HASH_BYTES);
   }
   // copy root
   memcpy(root, tree+HASH_BYTES, HASH_BYTES);
 }
 
-static void add_message_to_hash(blake512_state* S, blake512_state* check, unsigned char* buffer, unsigned int mleft) {
-  if (mleft > MBLOCKSIZE) {
-    dma_request(buffer, MBLOCKSIZE); while(!dma_done());
-    mleft -= MBLOCKSIZE;
-    while (mleft > 2*MBLOCKSIZE) {
-      dma_request(buffer+MBLOCKSIZE, MBLOCKSIZE);
-      blake512_update(S, buffer, MBLOCKSIZE * 8);
-      blake512_update(check, buffer, MBLOCKSIZE * 8);
-      while(!dma_done()); dma_request(buffer, MBLOCKSIZE);
-      blake512_update(S, buffer+MBLOCKSIZE, MBLOCKSIZE * 8);
-      blake512_update(check, buffer+MBLOCKSIZE, MBLOCKSIZE * 8);
-      mleft -= 2*MBLOCKSIZE;
-      while(!dma_done());
-    }
-    if (mleft > MBLOCKSIZE) {
-      dma_request(buffer+MBLOCKSIZE, MBLOCKSIZE);
-      blake512_update(S, buffer, MBLOCKSIZE * 8);
-      blake512_update(check, buffer, MBLOCKSIZE * 8);
-      while(!dma_done());
-      blake512_update(S, buffer+MBLOCKSIZE, MBLOCKSIZE * 8);
-      blake512_update(check, buffer+MBLOCKSIZE, MBLOCKSIZE * 8);
-      dma_request(buffer, mleft);
-      while(!dma_done());
-      blake512_update(S, buffer, mleft * 8);
-      blake512_update(check, buffer, mleft * 8);
-    }
-    else if (mleft > 0) {
-      dma_request(buffer+MBLOCKSIZE, mleft);
-      blake512_update(S, buffer, MBLOCKSIZE * 8);
-      blake512_update(check, buffer, MBLOCKSIZE * 8);
-      while(!dma_done());
-      blake512_update(S, buffer+MBLOCKSIZE, mleft * 8);
-      blake512_update(check, buffer+MBLOCKSIZE, mleft * 8);
-    }
-    else {
-      blake512_update(S, buffer, MBLOCKSIZE * 8);
-      blake512_update(check, buffer, MBLOCKSIZE * 8);
-    }
-  }
-  else {
-    dma_request(buffer, mleft);
-    while(!dma_done());
-    blake512_update(S, buffer, mleft*8);
-    blake512_update(check, buffer, mleft*8);
-  }
-}
-
-int crypto_sign(const unsigned char *sk)
+int pqcrypto_sign(const unsigned char *sk, unsigned char *m, unsigned int mlen, unsigned char *sig)
+ 
 {
   leafaddr a;
   int i;
   unsigned long long leafidx;
-  unsigned char R[MESSAGE_HASH_SEED_BYTES];
+  //unsigned char R[MESSAGE_HASH_SEED_BYTES];
   unsigned char m_h[MSGHASH_BYTES];
-  unsigned char checkbuf[MSGHASH_BYTES];
   unsigned char buffer[2*MBLOCKSIZE];
   unsigned long long *rnd = (unsigned long long *)buffer;
-  unsigned int mleft;
+  unsigned char *ptr = sig;
+
+  //unsigned char sig[MESSAGE_HASH_SEED_BYTES + ((TOTALTREE_HEIGHT+7)/8) + (N_LEVELS*WOTS_L*HASH_BYTES) + SUBTREE_HEIGHT*HASH_BYTES];
+  // see also CRYPTO_BYTES in api.h
+  unsigned char *R = sig;
 
 #if 2*MBLOCKSIZE < HASH_BYTES+SEED_BYTES
 #error "buffer is not large enough to hold seed and root"
@@ -280,21 +235,13 @@ int crypto_sign(const unsigned char *sk)
 
   // create leafidx deterministically
   {
-    while(!dma_done()); dma_request(&mleft, 4);
-#ifdef NOCOMMS
-    mleft = 32;
-#endif
-    blake512_state S;
-    blake512_state check;
-    blake512_init(&S);
-    blake512_init(&check);
-    blake512_update(&S, sk + CRYPTO_SECRETKEYBYTES - SK_RAND_SEED_BYTES, SK_RAND_SEED_BYTES*8);
-    while(!dma_done());
-
-    add_message_to_hash(&S, &check, buffer, mleft);
-
-    blake512_final( &S, rnd );
-    blake512_final( &check, checkbuf );
+    crypto_generichash_state S;
+    crypto_generichash_init(&S, NULL, 0, 64);
+    crypto_generichash_update(&S,
+                    sk + PQCRYPTO_SECRETKEYBYTES - SK_RAND_SEED_BYTES,
+                    SK_RAND_SEED_BYTES);
+    crypto_generichash_update(&S, m, mlen);
+    crypto_generichash_final( &S, (unsigned char*) rnd, 64 );
 
 #if TOTALTREE_HEIGHT != 60
 #error "Implemented for TOTALTREE_HEIGHT == 60!"
@@ -306,10 +253,11 @@ int crypto_sign(const unsigned char *sk)
 #error "Implemented for MESSAGE_HASH_SEED_BYTES == 32!"
 #endif
     memcpy(R, &rnd[2], MESSAGE_HASH_SEED_BYTES);
+    ptr+=MESSAGE_HASH_SEED_BYTES;
 
-    blake512_init(&S);
-    blake512_init(&check);
-    blake512_update(&S, R, MESSAGE_HASH_SEED_BYTES*8);
+    crypto_generichash_init(&S, NULL, 0, 64);
+    crypto_generichash_update(&S, R, MESSAGE_HASH_SEED_BYTES);
+    //crypto_generichash_final( &S, m_h, 64 );
 
     // construct pk
     leafaddr a;
@@ -317,60 +265,57 @@ int crypto_sign(const unsigned char *sk)
     a.subtree = 0;
     a.subleaf=0;
 
-    // like with the MBLOCKSIZE, this loop is needed since blake512_update does
-    // not seem to support updates of 1024 bits or more, after the first one
-    for(i=0; i<N_MASKS*HASH_BYTES; i += HASH_BYTES*2)
-      blake512_update(&S, sk+SEED_BYTES+i, 32*2*8);
+    crypto_generichash_update(&S, sk+SEED_BYTES,N_MASKS*HASH_BYTES); // tpk
 
     treehash(buffer, SUBTREE_HEIGHT, sk, &a, sk+SEED_BYTES);
-    blake512_update(&S, buffer, HASH_BYTES * 8);
+    crypto_generichash_update(&S, buffer, HASH_BYTES);
+    //crypto_generichash_final( &S, m_h, 64 );
 
-    // there is some gain in moving the first dma request up out of this call
-    add_message_to_hash(&S, &check, buffer, mleft);
-    blake512_final( &check, m_h );
+    crypto_generichash_update(&S, m, mlen);
 
-    // this prevents streaming in two different messages
-    if (memcmp(checkbuf, m_h, MSGHASH_BYTES)) {
-      return -1;
-    }
-    blake512_final( &S, m_h );
+    crypto_generichash_final( &S, m_h, 64 );
   }
   a.level   = N_LEVELS; // Use unique value $d$ for HORST address.
   a.subleaf = leafidx & ((1<<SUBTREE_HEIGHT)-1);
   a.subtree = leafidx >> SUBTREE_HEIGHT;
 
-  dma_transmit(R, MESSAGE_HASH_SEED_BYTES);
+  //dma_transmit(R, MESSAGE_HASH_SEED_BYTES);
 
   for(i=0;i<(TOTALTREE_HEIGHT+7)/8;i++) {
-    buffer[i] = (leafidx >> 8*i) & 0xff;
+    ptr[i] = (leafidx >> 8*i) & 0xff;
   }
-  while (!dma_done()); dma_transmit(buffer, (TOTALTREE_HEIGHT+7)/8);
+  ptr+=(TOTALTREE_HEIGHT+7)/8;
+  //dma_transmit(buffer, (TOTALTREE_HEIGHT+7)/8);
 
   get_seed(buffer, sk, &a);
-  horst_sign(buffer+SEED_BYTES, buffer, sk+SEED_BYTES, m_h);
+  horst_sign(ptr, buffer+SEED_BYTES, buffer, sk+SEED_BYTES, m_h);
+  // outputs stuff
+  ptr += HORST_SIGBYTES;
 
+  //unsigned char sig[N_LEVELS][WOTS_L*HASH_BYTES+SUBTREE_HEIGHT*HASH_BYTES]
   for(i=0;i<N_LEVELS;i++)
   {
     a.level = i;
 
     get_seed(buffer, sk, &a);
-    wots_sign(buffer+SEED_BYTES, buffer, sk+SEED_BYTES);
-    compute_authpath_wots(buffer+SEED_BYTES, &a, sk, sk+SEED_BYTES,SUBTREE_HEIGHT);
+    wots_sign(ptr, buffer+SEED_BYTES, buffer, sk+SEED_BYTES);
+    ptr += WOTS_SIGBYTES;
+    compute_authpath_wots(buffer+SEED_BYTES, &a, sk, sk+SEED_BYTES,SUBTREE_HEIGHT, ptr);
+    ptr+=SUBTREE_HEIGHT*HASH_BYTES;
 
     a.subleaf = a.subtree & ((1<<SUBTREE_HEIGHT)-1);
     a.subtree >>= SUBTREE_HEIGHT;
   }
 
-  while (!dma_done());
 
   return 0;
 }
 
-int crypto_sign_public_key(unsigned char *pk, unsigned char *sk)
+int pqcrypto_sign_public_key(unsigned char *pk, unsigned char *sk)
 {
   leafaddr a;
 
-  // randombytes(sk,CRYPTO_SECRETKEYBYTES); STM32L100C-DISCO has no RNG
+  //randombytes_buf(sk,PQCRYPTO_SECRETKEYBYTES);
   memcpy(pk,sk+SEED_BYTES,N_MASKS*HASH_BYTES);
 
   // Initialization of top-subtree address
@@ -383,67 +328,58 @@ int crypto_sign_public_key(unsigned char *pk, unsigned char *sk)
   return 0;
 }
 
-int crypto_sign_open(unsigned char *m, unsigned long long *mlen, unsigned long long smlen, const unsigned char *pk)
+int pqcrypto_sign_open(unsigned char* sig, const unsigned char *m, const unsigned long long mlen, const unsigned char *pk)
 {
   unsigned long long i;
   unsigned long long leafidx=0;
-  unsigned char buffer[2*(WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES)];
-  unsigned char *bufp;
+  //unsigned char buffer[2*(WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES)];
+  //unsigned char *bufp;
   unsigned char pkhash[HASH_BYTES];
   unsigned char root[HASH_BYTES];
-  unsigned char tpk[CRYPTO_PUBLICKEYBYTES];
+  unsigned char tpk[PQCRYPTO_PUBLICKEYBYTES];
   unsigned char m_h[MSGHASH_BYTES];
+  unsigned char *leaves = sig + MESSAGE_HASH_SEED_BYTES;
+  unsigned char *horst_sig = leaves + ((TOTALTREE_HEIGHT+7)/8);
+  unsigned char *wots_sig = horst_sig + HORST_SIGBYTES;
+  unsigned char *authpath = wots_sig + WOTS_SIGBYTES;
 
-  dma_request(buffer + MESSAGE_HASH_SEED_BYTES + CRYPTO_PUBLICKEYBYTES, smlen - CRYPTO_BYTES); // message
-  for(i=0;i<CRYPTO_PUBLICKEYBYTES;i++)
+  for(i=0;i<PQCRYPTO_PUBLICKEYBYTES;i++)
     tpk[i] = pk[i];
-  while (!dma_done());
-  memcpy(m, buffer + MESSAGE_HASH_SEED_BYTES + CRYPTO_PUBLICKEYBYTES, smlen - CRYPTO_BYTES);
-  *mlen = smlen - CRYPTO_BYTES;
 
-  dma_request(buffer, MESSAGE_HASH_SEED_BYTES);  // R
-  memcpy(buffer + MESSAGE_HASH_SEED_BYTES, tpk, CRYPTO_PUBLICKEYBYTES);
-  while (!dma_done());
+  crypto_generichash_state S;
+  crypto_generichash_init(&S, NULL, 0, 64);
 
-  msg_hash(m_h, buffer, smlen - CRYPTO_BYTES + MESSAGE_HASH_SEED_BYTES + CRYPTO_PUBLICKEYBYTES);
-
-  dma_request(buffer, (TOTALTREE_HEIGHT+7)/8);  // retrieve leaf indices
-  while (!dma_done());
+  crypto_generichash_update(&S, sig,  MESSAGE_HASH_SEED_BYTES); // R
+  //crypto_generichash_final( &S, m_h, 64 );
+  crypto_generichash_update(&S, tpk, PQCRYPTO_PUBLICKEYBYTES); // tpk
+  //crypto_generichash_final( &S, m_h, 64 );
+  crypto_generichash_update(&S, m, mlen); // message
+  crypto_generichash_final( &S, (unsigned char*) m_h, 64 );
 
   for(i=0;i<(TOTALTREE_HEIGHT+7)/8;i++) {
-    leafidx ^= (((unsigned long long)buffer[i]) << 8*i);
+    leafidx ^= (((unsigned long long)leaves[i]) << 8*i);
   }
-#ifndef NOCOMMS // to be able to benchmark without communication
-  if (horst_verify(root, tpk, m_h) != 0) {
+
+  if (horst_verify(horst_sig, root, tpk, m_h) != 0) {
     goto fail;
   }
-#endif
 
-  dma_request(buffer, WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES); while (!dma_done());
-  for(i=0;i<N_LEVELS;i++)
-  {
-    if (i != N_LEVELS - 1)
-      dma_request(buffer + ((1 - (i & 1)) * (WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES)), WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES);
-    bufp = buffer + ((i & 1) * (WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES));
-    wots_verify(bufp, bufp, root, tpk);
+  for(i=0;i<N_LEVELS;i++) {
+    wots_verify(wots_sig, wots_sig, root, tpk);
 
-    l_tree(pkhash, bufp,tpk);
-    validate_authpath(root, pkhash, leafidx & 0x1f, bufp + WOTS_SIGBYTES, tpk, SUBTREE_HEIGHT);
+    l_tree(pkhash, wots_sig,tpk);
+    validate_authpath(root, pkhash, leafidx & 0x1f, authpath, tpk, SUBTREE_HEIGHT);
     leafidx >>= 5;
-    while (!dma_done());
   }
 
   for(i=0;i<HASH_BYTES;i++)
-    if(root[i] != tpk[i+N_MASKS*HASH_BYTES])
+    if(root[i] != tpk[i+N_MASKS*HASH_BYTES]) {
       goto fail;
-  
+    }
+
   return 0;
-  
-  
+
 fail:
-  for(i=0;i<*mlen;i++)
-    m[i] = 0;
-  *mlen = -1;
   return -1;
 }
 
