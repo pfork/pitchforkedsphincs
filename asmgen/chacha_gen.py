@@ -11,6 +11,7 @@ print("""
 
 .syntax unified
 .cpu cortex-m3
+.thumb
 
 // operates on r0 as output and r1 as input pointer
 // assumes space of 64 bytes following both pointers
@@ -78,7 +79,7 @@ def stackswitch(a, b):
     stackflag = not stackflag
 
 
-for i in range(12 // 2):
+for i in range(20 // 2):
     QUARTERROUND(1, 5,  9, 13)
     QUARTERROUND(2, 6, 10, 14)
     QUARTERROUND(3, 7, 11, 15)
