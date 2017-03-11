@@ -7,6 +7,7 @@
 
 .syntax unified
 .cpu cortex-m3
+.thumb
 
 // operates on r0 as output and r1 as input pointer
 // assumes space of 64 bytes following both pointers
@@ -438,10 +439,290 @@ add r4, r4, r5, ROR #3
 eor r14, r14, r4, ROR #24
 add r10, r10, r14, ROR #0
 eor r5, r5, r10, ROR #29
-ror r5, r5, #28
-ror r6, r6, #28
-ror r7, r7, #28
-ror r8, r8, #28
+add r2, r2, r6, ROR #28
+eor r9, r9, r2, ROR #0
+add r10, r10, r9, ROR #16
+eor r6, r6, r10, ROR #4
+add r2, r2, r6, ROR #16
+eor r9, r9, r2, ROR #16
+add r10, r10, r9, ROR #8
+eor r6, r6, r10, ROR #16
+add r3, r3, r7, ROR #28
+eor r14, r14, r3, ROR #0
+add r11, r11, r14, ROR #16
+eor r7, r7, r11, ROR #4
+add r3, r3, r7, ROR #16
+eor r14, r14, r3, ROR #16
+add r11, r11, r14, ROR #8
+eor r7, r7, r11, ROR #16
+add r4, r4, r8, ROR #28
+eor r1, r1, r4, ROR #0
+add r12, r12, r1, ROR #16
+eor r8, r8, r12, ROR #4
+add r4, r4, r8, ROR #16
+eor r1, r1, r4, ROR #16
+add r12, r12, r1, ROR #8
+eor r8, r8, r12, ROR #16
+push {r10, r11}
+ldr r10, [sp, #8]
+ldr r11, [sp, #12]
+add r0, r0, r5, ROR #28
+eor r11, r11, r0, ROR #0
+add r10, r10, r11, ROR #16
+eor r5, r5, r10, ROR #4
+add r0, r0, r5, ROR #16
+eor r11, r11, r0, ROR #16
+add r10, r10, r11, ROR #8
+eor r5, r5, r10, ROR #16
+add r2, r2, r7, ROR #9
+eor r11, r11, r2, ROR #24
+add r12, r12, r11, ROR #24
+eor r7, r7, r12, ROR #23
+add r2, r2, r7, ROR #29
+eor r11, r11, r2, ROR #8
+add r12, r12, r11, ROR #16
+eor r7, r7, r12, ROR #3
+add r3, r3, r8, ROR #9
+eor r9, r9, r3, ROR #24
+add r10, r10, r9, ROR #24
+eor r8, r8, r10, ROR #23
+add r3, r3, r8, ROR #29
+eor r9, r9, r3, ROR #8
+add r10, r10, r9, ROR #16
+eor r8, r8, r10, ROR #3
+str r10, [sp, #8]
+str r11, [sp, #12]
+pop {r10, r11}
+add r0, r0, r6, ROR #9
+eor r1, r1, r0, ROR #24
+add r11, r11, r1, ROR #24
+eor r6, r6, r11, ROR #23
+add r0, r0, r6, ROR #29
+eor r1, r1, r0, ROR #8
+add r11, r11, r1, ROR #16
+eor r6, r6, r11, ROR #3
+add r4, r4, r5, ROR #9
+eor r14, r14, r4, ROR #24
+add r10, r10, r14, ROR #24
+eor r5, r5, r10, ROR #23
+add r4, r4, r5, ROR #29
+eor r14, r14, r4, ROR #8
+add r10, r10, r14, ROR #16
+eor r5, r5, r10, ROR #3
+add r2, r2, r6, ROR #22
+eor r9, r9, r2, ROR #16
+add r10, r10, r9, ROR #0
+eor r6, r6, r10, ROR #10
+add r2, r2, r6, ROR #10
+eor r9, r9, r2, ROR #0
+add r10, r10, r9, ROR #24
+eor r6, r6, r10, ROR #22
+add r3, r3, r7, ROR #22
+eor r14, r14, r3, ROR #16
+add r11, r11, r14, ROR #0
+eor r7, r7, r11, ROR #10
+add r3, r3, r7, ROR #10
+eor r14, r14, r3, ROR #0
+add r11, r11, r14, ROR #24
+eor r7, r7, r11, ROR #22
+add r4, r4, r8, ROR #22
+eor r1, r1, r4, ROR #16
+add r12, r12, r1, ROR #0
+eor r8, r8, r12, ROR #10
+add r4, r4, r8, ROR #10
+eor r1, r1, r4, ROR #0
+add r12, r12, r1, ROR #24
+eor r8, r8, r12, ROR #22
+push {r10, r11}
+ldr r10, [sp, #8]
+ldr r11, [sp, #12]
+add r0, r0, r5, ROR #22
+eor r11, r11, r0, ROR #16
+add r10, r10, r11, ROR #0
+eor r5, r5, r10, ROR #10
+add r0, r0, r5, ROR #10
+eor r11, r11, r0, ROR #0
+add r10, r10, r11, ROR #24
+eor r5, r5, r10, ROR #22
+add r2, r2, r7, ROR #3
+eor r11, r11, r2, ROR #8
+add r12, r12, r11, ROR #8
+eor r7, r7, r12, ROR #29
+add r2, r2, r7, ROR #23
+eor r11, r11, r2, ROR #24
+add r12, r12, r11, ROR #0
+eor r7, r7, r12, ROR #9
+add r3, r3, r8, ROR #3
+eor r9, r9, r3, ROR #8
+add r10, r10, r9, ROR #8
+eor r8, r8, r10, ROR #29
+add r3, r3, r8, ROR #23
+eor r9, r9, r3, ROR #24
+add r10, r10, r9, ROR #0
+eor r8, r8, r10, ROR #9
+str r10, [sp, #8]
+str r11, [sp, #12]
+pop {r10, r11}
+add r0, r0, r6, ROR #3
+eor r1, r1, r0, ROR #8
+add r11, r11, r1, ROR #8
+eor r6, r6, r11, ROR #29
+add r0, r0, r6, ROR #23
+eor r1, r1, r0, ROR #24
+add r11, r11, r1, ROR #0
+eor r6, r6, r11, ROR #9
+add r4, r4, r5, ROR #3
+eor r14, r14, r4, ROR #8
+add r10, r10, r14, ROR #8
+eor r5, r5, r10, ROR #29
+add r4, r4, r5, ROR #23
+eor r14, r14, r4, ROR #24
+add r10, r10, r14, ROR #0
+eor r5, r5, r10, ROR #9
+add r2, r2, r6, ROR #16
+eor r9, r9, r2, ROR #0
+add r10, r10, r9, ROR #16
+eor r6, r6, r10, ROR #16
+add r2, r2, r6, ROR #4
+eor r9, r9, r2, ROR #16
+add r10, r10, r9, ROR #8
+eor r6, r6, r10, ROR #28
+add r3, r3, r7, ROR #16
+eor r14, r14, r3, ROR #0
+add r11, r11, r14, ROR #16
+eor r7, r7, r11, ROR #16
+add r3, r3, r7, ROR #4
+eor r14, r14, r3, ROR #16
+add r11, r11, r14, ROR #8
+eor r7, r7, r11, ROR #28
+add r4, r4, r8, ROR #16
+eor r1, r1, r4, ROR #0
+add r12, r12, r1, ROR #16
+eor r8, r8, r12, ROR #16
+add r4, r4, r8, ROR #4
+eor r1, r1, r4, ROR #16
+add r12, r12, r1, ROR #8
+eor r8, r8, r12, ROR #28
+push {r10, r11}
+ldr r10, [sp, #8]
+ldr r11, [sp, #12]
+add r0, r0, r5, ROR #16
+eor r11, r11, r0, ROR #0
+add r10, r10, r11, ROR #16
+eor r5, r5, r10, ROR #16
+add r0, r0, r5, ROR #4
+eor r11, r11, r0, ROR #16
+add r10, r10, r11, ROR #8
+eor r5, r5, r10, ROR #28
+add r2, r2, r7, ROR #29
+eor r11, r11, r2, ROR #24
+add r12, r12, r11, ROR #24
+eor r7, r7, r12, ROR #3
+add r2, r2, r7, ROR #17
+eor r11, r11, r2, ROR #8
+add r12, r12, r11, ROR #16
+eor r7, r7, r12, ROR #15
+add r3, r3, r8, ROR #29
+eor r9, r9, r3, ROR #24
+add r10, r10, r9, ROR #24
+eor r8, r8, r10, ROR #3
+add r3, r3, r8, ROR #17
+eor r9, r9, r3, ROR #8
+add r10, r10, r9, ROR #16
+eor r8, r8, r10, ROR #15
+str r10, [sp, #8]
+str r11, [sp, #12]
+pop {r10, r11}
+add r0, r0, r6, ROR #29
+eor r1, r1, r0, ROR #24
+add r11, r11, r1, ROR #24
+eor r6, r6, r11, ROR #3
+add r0, r0, r6, ROR #17
+eor r1, r1, r0, ROR #8
+add r11, r11, r1, ROR #16
+eor r6, r6, r11, ROR #15
+add r4, r4, r5, ROR #29
+eor r14, r14, r4, ROR #24
+add r10, r10, r14, ROR #24
+eor r5, r5, r10, ROR #3
+add r4, r4, r5, ROR #17
+eor r14, r14, r4, ROR #8
+add r10, r10, r14, ROR #16
+eor r5, r5, r10, ROR #15
+add r2, r2, r6, ROR #10
+eor r9, r9, r2, ROR #16
+add r10, r10, r9, ROR #0
+eor r6, r6, r10, ROR #22
+add r2, r2, r6, ROR #30
+eor r9, r9, r2, ROR #0
+add r10, r10, r9, ROR #24
+eor r6, r6, r10, ROR #2
+add r3, r3, r7, ROR #10
+eor r14, r14, r3, ROR #16
+add r11, r11, r14, ROR #0
+eor r7, r7, r11, ROR #22
+add r3, r3, r7, ROR #30
+eor r14, r14, r3, ROR #0
+add r11, r11, r14, ROR #24
+eor r7, r7, r11, ROR #2
+add r4, r4, r8, ROR #10
+eor r1, r1, r4, ROR #16
+add r12, r12, r1, ROR #0
+eor r8, r8, r12, ROR #22
+add r4, r4, r8, ROR #30
+eor r1, r1, r4, ROR #0
+add r12, r12, r1, ROR #24
+eor r8, r8, r12, ROR #2
+push {r10, r11}
+ldr r10, [sp, #8]
+ldr r11, [sp, #12]
+add r0, r0, r5, ROR #10
+eor r11, r11, r0, ROR #16
+add r10, r10, r11, ROR #0
+eor r5, r5, r10, ROR #22
+add r0, r0, r5, ROR #30
+eor r11, r11, r0, ROR #0
+add r10, r10, r11, ROR #24
+eor r5, r5, r10, ROR #2
+add r2, r2, r7, ROR #23
+eor r11, r11, r2, ROR #8
+add r12, r12, r11, ROR #8
+eor r7, r7, r12, ROR #9
+add r2, r2, r7, ROR #11
+eor r11, r11, r2, ROR #24
+add r12, r12, r11, ROR #0
+eor r7, r7, r12, ROR #21
+add r3, r3, r8, ROR #23
+eor r9, r9, r3, ROR #8
+add r10, r10, r9, ROR #8
+eor r8, r8, r10, ROR #9
+add r3, r3, r8, ROR #11
+eor r9, r9, r3, ROR #24
+add r10, r10, r9, ROR #0
+eor r8, r8, r10, ROR #21
+str r10, [sp, #8]
+str r11, [sp, #12]
+pop {r10, r11}
+add r0, r0, r6, ROR #23
+eor r1, r1, r0, ROR #8
+add r11, r11, r1, ROR #8
+eor r6, r6, r11, ROR #9
+add r0, r0, r6, ROR #11
+eor r1, r1, r0, ROR #24
+add r11, r11, r1, ROR #0
+eor r6, r6, r11, ROR #21
+add r4, r4, r5, ROR #23
+eor r14, r14, r4, ROR #8
+add r10, r10, r14, ROR #8
+eor r5, r5, r10, ROR #9
+add r4, r4, r5, ROR #11
+eor r14, r14, r4, ROR #24
+add r10, r10, r14, ROR #0
+eor r5, r5, r10, ROR #21
+ror r5, r5, #4
+ror r6, r6, #4
+ror r7, r7, #4
+ror r8, r8, #4
 
 push {r1} // save the value in r1 to make room for the output address
 ldr r1, [sp, #12] // load the output address back to r1
