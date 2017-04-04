@@ -223,11 +223,13 @@ int pqcrypto_sign(const unsigned char *sk, unsigned char *m, unsigned int mlen, 
   unsigned char m_h[MSGHASH_BYTES];
   unsigned char buffer[2*MBLOCKSIZE];
   unsigned long long *rnd = (unsigned long long *)buffer;
-  unsigned char *ptr = sig;
 
   //unsigned char sig[MESSAGE_HASH_SEED_BYTES + ((TOTALTREE_HEIGHT+7)/8) + (N_LEVELS*WOTS_L*HASH_BYTES) + SUBTREE_HEIGHT*HASH_BYTES];
   // see also CRYPTO_BYTES in api.h
   unsigned char *R = sig;
+  unsigned char *leaves = R + MESSAGE_HASH_SEED_BYTES;
+  unsigned char *horst_sig = leaves + ((TOTALTREE_HEIGHT+7)/8);
+  unsigned char *wots_sig = horst_sig + HORST_SIGBYTES;
 
 #if 2*MBLOCKSIZE < HASH_BYTES+SEED_BYTES
 #error "buffer is not large enough to hold seed and root"
@@ -237,11 +239,9 @@ int pqcrypto_sign(const unsigned char *sk, unsigned char *m, unsigned int mlen, 
   {
     crypto_generichash_state S;
     crypto_generichash_init(&S, NULL, 0, 64);
-    crypto_generichash_update(&S,
-                    sk + PQCRYPTO_SECRETKEYBYTES - SK_RAND_SEED_BYTES,
-                    SK_RAND_SEED_BYTES);
+    crypto_generichash_update(&S, sk + PQCRYPTO_SECRETKEYBYTES - SK_RAND_SEED_BYTES, SK_RAND_SEED_BYTES);
     crypto_generichash_update(&S, m, mlen);
-    crypto_generichash_final( &S, (unsigned char*) rnd, 64 );
+    crypto_generichash_final(&S, (unsigned char*) rnd, 64);
 
 #if TOTALTREE_HEIGHT != 60
 #error "Implemented for TOTALTREE_HEIGHT == 60!"
@@ -341,7 +341,6 @@ int pqcrypto_sign_open(unsigned char* sig, const unsigned char *m, const unsigne
   unsigned char *leaves = sig + MESSAGE_HASH_SEED_BYTES;
   unsigned char *horst_sig = leaves + ((TOTALTREE_HEIGHT+7)/8);
   unsigned char *wots_sig = horst_sig + HORST_SIGBYTES;
-  unsigned char *authpath = wots_sig + WOTS_SIGBYTES;
 
   for(i=0;i<PQCRYPTO_PUBLICKEYBYTES;i++)
     tpk[i] = pk[i];
@@ -354,7 +353,7 @@ int pqcrypto_sign_open(unsigned char* sig, const unsigned char *m, const unsigne
   crypto_generichash_update(&S, tpk, PQCRYPTO_PUBLICKEYBYTES); // tpk
   //crypto_generichash_final( &S, m_h, 64 );
   crypto_generichash_update(&S, m, mlen); // message
-  crypto_generichash_final( &S, (unsigned char*) m_h, 64 );
+  //crypto_generichash_final( &S, (unsigned char*) m_h, 64 );
 
   for(i=0;i<(TOTALTREE_HEIGHT+7)/8;i++) {
     leafidx ^= (((unsigned long long)leaves[i]) << 8*i);
@@ -365,10 +364,16 @@ int pqcrypto_sign_open(unsigned char* sig, const unsigned char *m, const unsigne
   }
 
   for(i=0;i<N_LEVELS;i++) {
-    wots_verify(wots_sig, wots_sig, root, tpk);
+    wots_verify(wots_sig+i*(WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES),
+                wots_sig+i*(WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES), root, tpk);
 
-    l_tree(pkhash, wots_sig,tpk);
-    validate_authpath(root, pkhash, leafidx & 0x1f, authpath, tpk, SUBTREE_HEIGHT);
+    l_tree(pkhash, wots_sig+i*(WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES), tpk);
+    validate_authpath(root,
+                      pkhash,
+                      leafidx & 0x1f,
+                      wots_sig+i*(WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES)+WOTS_SIGBYTES,
+                      tpk,
+                      SUBTREE_HEIGHT);
     leafidx >>= 5;
   }
 

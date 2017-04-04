@@ -188,7 +188,7 @@ int horst_sign(unsigned char *sig,
   int stackptr = -1;
 
   unsigned char sk[64];
-  unsigned char buf[HASH_BYTES*(HORST_LOGT-5)];
+  //unsigned char buf[HASH_BYTES*(HORST_LOGT-5)];
   unsigned short boffset = 0;
   for (i=0; i < HORST_T; i++) //generate leafs for the pubkeys along the bottom
   {
@@ -200,17 +200,17 @@ int horst_sign(unsigned char *sig,
       indic |= roundnumlist[roundnumpos+1];
       roundnumpos += 2;
     }
-    treehash(idxlist, sigposlist, sk + (i&1)*HORST_SKBYTES, th_stack, &stackptr, i, masks, indic, buf, &boffset);
-    unsigned int i2;
-    unsigned short pos2;
-    for(i2=0;i2<boffset;) {
-      pos2=(buf[i2] << 8) | buf[i2+1];
-      memcpy(sig+pos2, buf+i2+2, HASH_BYTES);
-      i2+=HASH_BYTES+2;
-      if(i2<HASH_BYTES+2 && i2>0) {
-      }
-    }
-    boffset=0;
+    treehash(idxlist, sigposlist, sk + (i&1)*HORST_SKBYTES, th_stack, &stackptr, i, masks, indic, sig, &boffset);
+    //unsigned int i2;
+    //unsigned short pos2;
+    //for(i2=0;i2<boffset;) {
+    //  pos2=(buf[i2] << 8) | buf[i2+1];
+    //  memcpy(sig+pos2, buf+i2+2, HASH_BYTES);
+    //  i2+=HASH_BYTES+2;
+    //  if(i2<HASH_BYTES+2 && i2>0) {
+    //  }
+    //}
+    //boffset=0;
   }
 
   for(i=0;i<HASH_BYTES;i++)
