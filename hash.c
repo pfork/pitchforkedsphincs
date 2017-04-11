@@ -1,11 +1,15 @@
 #include "params.h"
 #include "hash.h"
-
 #include "crypto_generichash.h"
-
-extern void chacha_perm_asm(unsigned char* out, const unsigned char* in);
-
 #include <stddef.h>
+
+#ifdef CHACHA_ASM
+extern void chacha_perm_asm(unsigned char* out, const unsigned char* in);
+#define chacha_perm chacha_perm_asm
+#else
+extern void chacha_permute(unsigned char* _out, const unsigned char* in);
+#define chacha_perm chacha_permute
+#endif
 
 int varlen_hash(unsigned char *out,const unsigned char *in,unsigned long long inlen)
 {
@@ -18,7 +22,6 @@ int msg_hash(unsigned char *out,const unsigned char *in,unsigned long long inlen
   crypto_generichash(out, 64, in,inlen, NULL, 0);
   return 0;
 }
-
 
 static const char *hashc = "expand 32-byte to 64-byte state!";
 
@@ -35,10 +38,10 @@ int hash_2n_n(unsigned char *out,const unsigned char *in)
     x[i]    = in[i];
     x[i+32] = hashc[i];
   }
-  chacha_perm_asm(x,x);
+  chacha_perm(x,x);
   for(i=0;i<32;i++)
     x[i] = x[i] ^ in[i+32];
-  chacha_perm_asm(x,x);
+  chacha_perm(x,x);
   for(i=0;i<32;i++)
     out[i] = x[i];
 
@@ -79,7 +82,7 @@ int hash_n_n(unsigned char *out,const unsigned char *in)
     x[i]    = in[i];
     x[i+32] = hashc[i];
   }
-  chacha_perm_asm(x,x);
+  chacha_perm(x,x);
   for(i=0;i<32;i++)
     out[i] = x[i];
   

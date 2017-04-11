@@ -1,4 +1,4 @@
-#include "crypto_sign.h"
+#include "pqcrypto_sign.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -7,18 +7,19 @@
 #include "wots.h"
 #include "horst.h"
 #include "hash.h"
-#include "crypto_generichash.h"
-#include "randombytes_pitchfork.h"
+#include <crypto_generichash.h>
 
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
 #define BIGINT_BYTES ((TOTALTREE_HEIGHT-SUBTREE_HEIGHT+7)/8)
 
+// unfortunately this cannot be much higher, as crypto_generichash_update does not
+// seem to support updates of 1024 bits or more, after the first one
 #define MBLOCKSIZE 64
 
 #if (TOTALTREE_HEIGHT-SUBTREE_HEIGHT) > 64
-#error "TOTALTREE_HEIGHT-SUBTREE_HEIGHT must be at most 64" 
+#error "TOTALTREE_HEIGHT-SUBTREE_HEIGHT must be at most 64"
 #endif
 
 typedef struct{
@@ -57,7 +58,7 @@ static void get_seed(unsigned char seed[SEED_BYTES], const unsigned char *sk, co
 
   for(i=0;i<8;i++)
     buffer[SEED_BYTES+i] = (t >> 8*i) & 0xff;
-  
+
 #if SEED_BYTES != HASH_BYTES
 #error "Need to have SEED_BYTES == HASH_BYTES"
 #endif
@@ -78,8 +79,8 @@ static void l_tree(unsigned char *leaf, unsigned char *wots_pk, const unsigned c
     {
       memcpy(wots_pk+(l>>1)*HASH_BYTES,wots_pk+(l-1)*HASH_BYTES, HASH_BYTES);
       l=(l>>1)+1;
-    } 
-    else 
+    }
+    else
       l=(l>>1);
   }
   memcpy(leaf,wots_pk,HASH_BYTES);
@@ -94,11 +95,11 @@ static void gen_leaf_wots(unsigned char leaf[HASH_BYTES], const unsigned char *m
   get_seed(seed, sk, a);
   wots_pkgen(pk, seed, masks);
 
-  l_tree(leaf, pk, masks); 
+  l_tree(leaf, pk, masks);
 }
 
 
-static void treehash(unsigned char *node, int height, const unsigned char *sk, const leafaddr *leaf, const unsigned char *masks)
+static void treehash(unsigned char *nodep, int height, const unsigned char *sk, const leafaddr *leaf, const unsigned char *masks)
 {
 
   leafaddr a = *leaf;
@@ -110,7 +111,7 @@ static void treehash(unsigned char *node, int height, const unsigned char *sk, c
 
   lastnode = a.subleaf+(1<<height);
 
-  for(;a.subleaf<lastnode;a.subleaf++) 
+  for(;a.subleaf<lastnode;a.subleaf++)
   {
     gen_leaf_wots(stack+stackoffset*HASH_BYTES,masks,sk,&a);
     stacklevels[stackoffset] = 0;
@@ -126,13 +127,13 @@ static void treehash(unsigned char *node, int height, const unsigned char *sk, c
     }
   }
   for(i=0;i<HASH_BYTES;i++)
-    node[i] = stack[i];
+    nodep[i] = stack[i];
 }
 
 
 static void validate_authpath(unsigned char root[HASH_BYTES], const unsigned char leaf[HASH_BYTES], unsigned int leafidx, const unsigned char *authpath, const unsigned char *masks, unsigned int height)
 {
-  int i,j;
+  unsigned int i,j;
   unsigned char buffer[2*HASH_BYTES];
 
   if(leafidx&1)
@@ -172,9 +173,10 @@ static void validate_authpath(unsigned char root[HASH_BYTES], const unsigned cha
 }
 
 
-static void compute_authpath_wots(unsigned char root[HASH_BYTES], const leafaddr *a, const unsigned char *sk, const unsigned char *masks, unsigned int height, unsigned char *authpath)
+static void compute_authpath_wots(unsigned char **out, unsigned char root[HASH_BYTES], const leafaddr *a, const unsigned char *sk, const unsigned char *masks, unsigned int height)
 {
-  int i, idx, j;
+  unsigned int i, j;
+  int idx;
   leafaddr ta = *a;
 
   unsigned char tree[2*(1<<SUBTREE_HEIGHT)*HASH_BYTES]; // 2 * 32 * 32 = 2KB
@@ -195,7 +197,7 @@ static void compute_authpath_wots(unsigned char root[HASH_BYTES], const leafaddr
   for (i = (1<<SUBTREE_HEIGHT); i > 0; i>>=1)
   {
     for (j = 0; j < i; j+=2)
-      hash_2n_n_mask(tree + (i>>1)*HASH_BYTES + (j>>1) * HASH_BYTES, 
+      hash_2n_n_mask(tree + (i>>1)*HASH_BYTES + (j>>1) * HASH_BYTES,
           tree + i*HASH_BYTES + j * HASH_BYTES,
           masks+2*(WOTS_LOG_L + level)*HASH_BYTES);
 
@@ -206,26 +208,25 @@ static void compute_authpath_wots(unsigned char root[HASH_BYTES], const leafaddr
 
   // copy authpath
   for(i=0;i<height;i++) {
-    memcpy(authpath + i*HASH_BYTES, tree + ((1<<SUBTREE_HEIGHT)>>i)*HASH_BYTES + ((idx >> i) ^ 1) * HASH_BYTES, HASH_BYTES);
-    //dma_transmit(                 tree + ((1<<SUBTREE_HEIGHT)>>i)*HASH_BYTES + ((idx >> i) ^ 1) * HASH_BYTES, HASH_BYTES);
+    memcpy(*out, tree + ((1<<SUBTREE_HEIGHT)>>i)*HASH_BYTES + ((idx >> i) ^ 1) * HASH_BYTES, HASH_BYTES);
+    *out+=HASH_BYTES;
   }
   // copy root
   memcpy(root, tree+HASH_BYTES, HASH_BYTES);
 }
 
-int pqcrypto_sign(const unsigned char *sk, unsigned char *m, unsigned int mlen, unsigned char *sig) {
+int pqcrypto_sign(unsigned char *sig, const unsigned char *msg, const unsigned char *sk)
+{
   leafaddr a;
   int i;
   unsigned long long leafidx;
+  unsigned char *R = sig;
   unsigned char m_h[MSGHASH_BYTES];
+  unsigned char checkbuf[MSGHASH_BYTES];
   unsigned char buffer[2*MBLOCKSIZE];
   unsigned long long *rnd = (unsigned long long *)buffer;
-
-  //unsigned char sig[MESSAGE_HASH_SEED_BYTES + ((TOTALTREE_HEIGHT+7)/8) + (N_LEVELS*WOTS_L*HASH_BYTES) + SUBTREE_HEIGHT*HASH_BYTES];
-  // see also CRYPTO_BYTES in api.h
-  unsigned char *R = sig;
   unsigned char *leaves = R + MESSAGE_HASH_SEED_BYTES;
-  unsigned char *horst_sig = leaves + ((TOTALTREE_HEIGHT+7)/8);
+  unsigned char *horst_sig = leaves + (TOTALTREE_HEIGHT+7)/8;
   unsigned char *wots_sig = horst_sig + HORST_SIGBYTES;
 
 #if 2*MBLOCKSIZE < HASH_BYTES+SEED_BYTES
@@ -235,10 +236,15 @@ int pqcrypto_sign(const unsigned char *sk, unsigned char *m, unsigned int mlen, 
   // create leafidx deterministically
   {
     crypto_generichash_state S;
+    crypto_generichash_state check;
     crypto_generichash_init(&S, NULL, 0, 64);
-    crypto_generichash_update(&S, sk + PQCRYPTO_SECRETKEYBYTES - SK_RAND_SEED_BYTES, SK_RAND_SEED_BYTES);
-    crypto_generichash_update(&S, m, mlen);
+    crypto_generichash_init(&check, NULL, 0, 64);
+    crypto_generichash_update(&S, sk + PQCRYPTO_SECRETKEYBYTES - SK_RAND_SEED_BYTES, SK_RAND_SEED_BYTES*8);
+
+    crypto_generichash_update(&S, msg, 32);
+
     crypto_generichash_final(&S, (unsigned char*) rnd, 64);
+    crypto_generichash_final(&check, checkbuf, 64);
 
 #if TOTALTREE_HEIGHT != 60
 #error "Implemented for TOTALTREE_HEIGHT == 60!"
@@ -252,6 +258,7 @@ int pqcrypto_sign(const unsigned char *sk, unsigned char *m, unsigned int mlen, 
     memcpy(R, &rnd[2], MESSAGE_HASH_SEED_BYTES);
 
     crypto_generichash_init(&S, NULL, 0, 64);
+    crypto_generichash_init(&check, NULL, 0, 64);
     crypto_generichash_update(&S, R, MESSAGE_HASH_SEED_BYTES);
 
     // construct pk
@@ -260,19 +267,27 @@ int pqcrypto_sign(const unsigned char *sk, unsigned char *m, unsigned int mlen, 
     a.subtree = 0;
     a.subleaf=0;
 
-    crypto_generichash_update(&S, sk+SEED_BYTES,N_MASKS*HASH_BYTES); // tpk
+    // like with the MBLOCKSIZE, this loop is needed since crypto_generichash_update does
+    // not seem to support updates of 1024 bits or more, after the first one
+    for(i=0; i<N_MASKS*HASH_BYTES; i += HASH_BYTES*2)
+      crypto_generichash_update(&S, sk+SEED_BYTES+i, 32*2);
 
     treehash(buffer, SUBTREE_HEIGHT, sk, &a, sk+SEED_BYTES);
     crypto_generichash_update(&S, buffer, HASH_BYTES);
 
-    crypto_generichash_update(&S, m, mlen);
+    crypto_generichash_update(&S, msg, 32);
 
-    crypto_generichash_final( &S, m_h, 64 );
+    crypto_generichash_final(&check, m_h, 64);
+
+    // this prevents streaming in two different messages
+    if (memcmp(checkbuf, m_h, MSGHASH_BYTES)) {
+      return -1;
+    }
+    crypto_generichash_final(&S, m_h, 64);
   }
   a.level   = N_LEVELS; // Use unique value $d$ for HORST address.
   a.subleaf = leafidx & ((1<<SUBTREE_HEIGHT)-1);
   a.subtree = leafidx >> SUBTREE_HEIGHT;
-
 
   for(i=0;i<(TOTALTREE_HEIGHT+7)/8;i++) {
     leaves[i] = (leafidx >> 8*i) & 0xff;
@@ -280,16 +295,15 @@ int pqcrypto_sign(const unsigned char *sk, unsigned char *m, unsigned int mlen, 
 
   get_seed(buffer, sk, &a);
   horst_sign(horst_sig, buffer+SEED_BYTES, buffer, sk+SEED_BYTES, m_h);
-  // outputs stuff
 
+  unsigned char *outptr = wots_sig;
   for(i=0;i<N_LEVELS;i++)
   {
     a.level = i;
 
     get_seed(buffer, sk, &a);
-    wots_sign(wots_sig+i*(WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES), buffer+SEED_BYTES, buffer, sk+SEED_BYTES);
-    compute_authpath_wots(buffer+SEED_BYTES, &a, sk, sk+SEED_BYTES, SUBTREE_HEIGHT,
-                          wots_sig+i*(WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES)+WOTS_SIGBYTES);
+    wots_sign(&outptr, buffer+SEED_BYTES, buffer, sk+SEED_BYTES);
+    compute_authpath_wots(&outptr, buffer+SEED_BYTES, &a, sk, sk+SEED_BYTES,SUBTREE_HEIGHT);
 
     a.subleaf = a.subtree & ((1<<SUBTREE_HEIGHT)-1);
     a.subtree >>= SUBTREE_HEIGHT;
@@ -303,7 +317,7 @@ int pqcrypto_sign_public_key(unsigned char *pk, unsigned char *sk)
 {
   leafaddr a;
 
-  //randombytes_buf(sk,PQCRYPTO_SECRETKEYBYTES);
+  // randombytes(sk,CRYPTO_SECRETKEYBYTES); STM32L100C-DISCO has no RNG
   memcpy(pk,sk+SEED_BYTES,N_MASKS*HASH_BYTES);
 
   // Initialization of top-subtree address
@@ -316,17 +330,16 @@ int pqcrypto_sign_public_key(unsigned char *pk, unsigned char *sk)
   return 0;
 }
 
-int pqcrypto_sign_open(unsigned char* sig, const unsigned char *m, const unsigned long long mlen, const unsigned char *pk)
-{
+int pqcrypto_sign_open(unsigned char *m, const unsigned char *sig, const unsigned char *pk) {
   unsigned long long i;
   unsigned long long leafidx=0;
-  //unsigned char buffer[2*(WOTS_SIGBYTES + SUBTREE_HEIGHT*HASH_BYTES)];
-  //unsigned char *bufp;
   unsigned char pkhash[HASH_BYTES];
   unsigned char root[HASH_BYTES];
   unsigned char tpk[PQCRYPTO_PUBLICKEYBYTES];
   unsigned char m_h[MSGHASH_BYTES];
-  unsigned char *leaves = sig + MESSAGE_HASH_SEED_BYTES;
+
+  unsigned char *R = (unsigned char *) sig;
+  unsigned char *leaves = (unsigned char *) sig + MESSAGE_HASH_SEED_BYTES;
   unsigned char *horst_sig = leaves + ((TOTALTREE_HEIGHT+7)/8);
   unsigned char *wots_sig = horst_sig + HORST_SIGBYTES;
 
@@ -335,10 +348,10 @@ int pqcrypto_sign_open(unsigned char* sig, const unsigned char *m, const unsigne
 
   crypto_generichash_state S;
   crypto_generichash_init(&S, NULL, 0, 64);
-
-  crypto_generichash_update(&S, sig,  MESSAGE_HASH_SEED_BYTES); // R
-  crypto_generichash_update(&S, tpk, PQCRYPTO_PUBLICKEYBYTES); // tpk
-  crypto_generichash_update(&S, m, mlen); // message
+  crypto_generichash_update(&S, R,  MESSAGE_HASH_SEED_BYTES);
+  crypto_generichash_update(&S, tpk, PQCRYPTO_PUBLICKEYBYTES);
+  crypto_generichash_update(&S, m, 32);
+  crypto_generichash_final(&S, (unsigned char*) m_h, 64);
 
   for(i=0;i<(TOTALTREE_HEIGHT+7)/8;i++) {
     leafidx ^= (((unsigned long long)leaves[i]) << 8*i);
@@ -363,13 +376,12 @@ int pqcrypto_sign_open(unsigned char* sig, const unsigned char *m, const unsigne
   }
 
   for(i=0;i<HASH_BYTES;i++)
-    if(root[i] != tpk[i+N_MASKS*HASH_BYTES]) {
+    if(root[i] != tpk[i+N_MASKS*HASH_BYTES])
       goto fail;
-    }
 
   return 0;
+
 
 fail:
   return -1;
 }
-

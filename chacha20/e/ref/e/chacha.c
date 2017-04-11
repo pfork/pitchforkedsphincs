@@ -6,10 +6,11 @@ Public domain.
 
 /* Modifications for use in armedsphincs are annotated '//sphincs' */
 
-//sphincs
-extern void chacha_perm_asm(unsigned char* out, const unsigned char* in);
-
 #include "ecrypt-sync.h"
+
+#ifdef CHACHA_ASM
+  extern void chacha_perm_asm(unsigned int* out, const unsigned int* in);
+#endif
 
 #define ROTATE(v,c) (ROTL32(v,c))
 #define XOR(v,w) ((v) ^ (w))
@@ -27,18 +28,23 @@ static void salsa20_wordtobyte(u8 output[64],const u32 input[16])
   u32 x[16];
   int i;
 
-  // for (i = 0;i < 16;++i) x[i] = input[i];
-  // for (i = 12;i > 0;i -= 2) {
-  //   QUARTERROUND( 0, 4, 8,12)
-  //   QUARTERROUND( 1, 5, 9,13)
-  //   QUARTERROUND( 2, 6,10,14)
-  //   QUARTERROUND( 3, 7,11,15)
-  //   QUARTERROUND( 0, 5,10,15)
-  //   QUARTERROUND( 1, 6,11,12)
-  //   QUARTERROUND( 2, 7, 8,13)
-  //   QUARTERROUND( 3, 4, 9,14)
-  // }
-  chacha_perm_asm((unsigned char*) x, (const unsigned char*) input); //sphincs
+//sphincs
+#ifdef CHACHA_ASM
+  chacha_perm_asm(x, input);
+#else
+  for (i = 0;i < 16;++i) x[i] = input[i];
+  for (i = 20;i > 0;i -= 2) {
+    QUARTERROUND( 0, 4, 8,12)
+    QUARTERROUND( 1, 5, 9,13)
+    QUARTERROUND( 2, 6,10,14)
+    QUARTERROUND( 3, 7,11,15)
+    QUARTERROUND( 0, 5,10,15)
+    QUARTERROUND( 1, 6,11,12)
+    QUARTERROUND( 2, 7, 8,13)
+    QUARTERROUND( 3, 4, 9,14)
+  }
+#endif
+
   for (i = 0;i < 16;++i) x[i] = PLUS(x[i],input[i]);
   for (i = 0;i < 16;++i) U32TO8_LITTLE(output + 4 * i,x[i]);
 }
@@ -53,6 +59,7 @@ static const char tau[16] = "expand 16-byte k";
 
 void ECRYPT_keysetup(ECRYPT_ctx *x,const u8 *k,u32 kbits,u32 ivbits)
 {
+  (void)ivbits;
   const char *constants;
 
   x->input[4] = U8TO32_LITTLE(k + 0);
@@ -77,6 +84,7 @@ void ECRYPT_keysetup(ECRYPT_ctx *x,const u8 *k,u32 kbits,u32 ivbits)
 
 void ECRYPT_ivsetup(ECRYPT_ctx *x,const u8 *iv)
 {
+  (void)iv;
   x->input[12] = 0;
   x->input[13] = 0;
   x->input[14] = 0;//U8TO32_LITTLE(iv + 0); //sphincs
@@ -86,7 +94,7 @@ void ECRYPT_ivsetup(ECRYPT_ctx *x,const u8 *iv)
 void ECRYPT_encrypt_bytes(ECRYPT_ctx *x,const u8 *m,u8 *c,u32 bytes)
 {
   u8 output[64];
-  int i;
+  unsigned int i;
 
   if (!bytes) return;
   for (;;) {

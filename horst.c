@@ -2,40 +2,29 @@
 #include "horst.h"
 #include "hash.h"
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "crypto_stream_chacha20.h"
 #include "chacha20/e/ref/e/ecrypt-sync.h"
 
-void update_sig(const unsigned int *idxlist, const unsigned short *sigposlist, node *N, unsigned char* buf, unsigned short *boffset)
+void update_sig(const unsigned int *idxlist, const unsigned short *sigposlist, node *N, unsigned char *out)
 {
   int i;
   // not storing the top of auth paths; instead store layer 10
   if (N->idx >= 64 && N->idx < 128) {
-    buf[*boffset] = ((N->idx-64)*HASH_BYTES) >> 8;
-    *boffset += 1;
-    buf[*boffset] = ((N->idx-64)*HASH_BYTES) & 0xff;
-    *boffset += 1;
-    memcpy(buf+*boffset, N->hash, HASH_BYTES);
-    *boffset += HASH_BYTES;
+    memcpy(out + ((N->idx-64)*HASH_BYTES), N->hash, HASH_BYTES);
   }
   else {
     for (i = 0; i < HORST_K * (HORST_LOGT-6); i++)
     {
       if (N->idx == idxlist[i]) {
-        buf[*boffset] = sigposlist[i] >> 8;
-        *boffset += 1;
-        buf[*boffset] = sigposlist[i] & 0xff;
-        *boffset += 1;
-        memcpy(buf+*boffset, N->hash, HASH_BYTES);
-        *boffset += HASH_BYTES;
+        memcpy(out + sigposlist[i], N->hash, HASH_BYTES);
       }
     }
   }
 }
 
-void update_sig_sk(const unsigned int *idxlist, const unsigned short *sigposlist, unsigned int idx, const unsigned char *sk, unsigned char* buf, unsigned short *boffset)
+void update_sig_sk(const unsigned int *idxlist, const unsigned short *sigposlist, unsigned int idx, const unsigned char *sk, unsigned char *out)
 {
   int i;
   // the neighbor is in the auth path, not this node
@@ -43,12 +32,7 @@ void update_sig_sk(const unsigned int *idxlist, const unsigned short *sigposlist
   for (i = 0; i < HORST_K * (HORST_LOGT-6); i++)
   {
     if (neighbor == idxlist[i]) {
-      buf[*boffset] = (sigposlist[i] - HORST_SKBYTES) >> 8;
-      *boffset += 1;
-      buf[*boffset] = (sigposlist[i] - HORST_SKBYTES) & 0xff;
-      *boffset += 1;
-      memcpy(buf+*boffset, sk, HORST_SKBYTES);
-      *boffset += HORST_SKBYTES;
+      memcpy(out + (sigposlist[i] - HORST_SKBYTES), sk, HORST_SKBYTES);
     }
   }
 }
@@ -64,14 +48,14 @@ void treehash(const unsigned int *idxlist, const unsigned short *sigposlist,
               const unsigned char *sk,
               node *th_stack, int *stackptr, const unsigned int phi,
               const unsigned char masks[2*HORST_LOGT*HASH_BYTES],
-              unsigned short indic, unsigned char* buf, unsigned short *boffset)
+              unsigned short indic, unsigned char *out)
 {
   unsigned char concat[HASH_BYTES*2];
   node N;
   leafcalc(&N, sk, phi);
   if (indic & 1) {
-    update_sig_sk(idxlist, sigposlist, N.idx, sk, buf, boffset);
-    update_sig(idxlist, sigposlist, &N, buf, boffset);
+    update_sig_sk(idxlist, sigposlist, N.idx, sk, out);
+    update_sig(idxlist, sigposlist, &N, out);
   }
   indic >>= 1;
   while (*stackptr >= 0 && N.level == th_stack[*stackptr].level)
@@ -83,7 +67,7 @@ void treehash(const unsigned int *idxlist, const unsigned short *sigposlist,
     N.level = N.level + 1;
     *stackptr -= 1;
     if (indic & 1) {
-      update_sig(idxlist, sigposlist, &N, buf, boffset);
+      update_sig(idxlist, sigposlist, &N, out);
     }
     indic >>= 1;
   }
@@ -112,7 +96,7 @@ void addtoroundnumlist(unsigned short *roundnumlist, unsigned short *roundnumpos
   }
 }
 
-int horst_sign(unsigned char *sig,
+int horst_sign(unsigned char *out,
                unsigned char pk[HASH_BYTES],
                const unsigned char seed[SEED_BYTES],
                const unsigned char masks[2*HORST_LOGT*HASH_BYTES],
@@ -136,7 +120,7 @@ int horst_sign(unsigned char *sig,
   unsigned short sigposlist[HORST_K * (HORST_LOGT-6)];
   unsigned short roundnumlist[2*HORST_K * (HORST_LOGT-6+1)]; // alternates roundnum and indicator bits, +1 for sk
   node th_stack[HORST_LOGT * 2];
-  
+
   // initialise idx list to zeros to prevent erroneous matches
   for (i=0; i < HORST_K * (HORST_LOGT-6); i++)
   {
@@ -188,7 +172,6 @@ int horst_sign(unsigned char *sig,
   int stackptr = -1;
 
   unsigned char sk[64];
-  unsigned short boffset = 0;
   for (i=0; i < HORST_T; i++) //generate leafs for the pubkeys along the bottom
   {
     if ((i&1) == 0) {
@@ -199,7 +182,7 @@ int horst_sign(unsigned char *sig,
       indic |= roundnumlist[roundnumpos+1];
       roundnumpos += 2;
     }
-    treehash(idxlist, sigposlist, sk + (i&1)*HORST_SKBYTES, th_stack, &stackptr, i, masks, indic, sig, &boffset);
+    treehash(idxlist, sigposlist, sk + (i&1)*HORST_SKBYTES, th_stack, &stackptr, i, masks, indic, out);
   }
 
   for(i=0;i<HASH_BYTES;i++)
@@ -213,11 +196,9 @@ int horst_verify(unsigned char* sig,
                  const unsigned char masks[2*HORST_LOGT*HASH_BYTES],
                  const unsigned char m_hash[MSGHASH_BYTES])
 {
-  //unsigned char buffer[HASH_BYTES*(HORST_LOGT-6+1) * 2];
-  unsigned char *buffer = sig + (64 * HASH_BYTES);
-  unsigned char *l, *r, *bufp, *bufstart;
+  unsigned char *bufstart = sig + (64 * HASH_BYTES);
+  unsigned char *l, *r, *bufp;
   unsigned char hashbuf[HASH_BYTES];
-  //unsigned char level10[64*HASH_BYTES];
   unsigned char *level10 = sig;
   unsigned int idx;
   int i,j,k;
@@ -226,14 +207,8 @@ int horst_verify(unsigned char* sig,
 #error "Need to have HORST_K == (MSGHASH_BYTES/2)"
 #endif
 
-  //dma_request(level10, 64*HASH_BYTES);
-  //dma_request(buffer, HASH_BYTES*(HORST_LOGT-6+1));
-
   for(i=0;i<HORST_K;i++)
   {
-    //if (i != 31)
-    //  dma_request(buffer + HASH_BYTES*(HORST_LOGT-6+1) * (1 - (i & 1)), HASH_BYTES*(HORST_LOGT-6+1));
-    bufstart = buffer;
     idx = m_hash[2*i] + (m_hash[2*i+1]<<8);
 
 #if HORST_SKBYTES != HASH_BYTES
@@ -276,10 +251,9 @@ int horst_verify(unsigned char* sig,
     hash_nn_n_mask(bufstart,l, r,masks+2*(HORST_LOGT-7)*HASH_BYTES);
 
     for(k=0;k<HASH_BYTES;k++)
-      if(level10[idx*HASH_BYTES+k] != bufstart[k]) {
+      if(level10[idx*HASH_BYTES+k] != bufstart[k])
         goto fail;
-      }
-    buffer += HASH_BYTES*(HORST_LOGT-6+1);
+    bufstart += HASH_BYTES*(HORST_LOGT-6+1);
   }
 
   // Compute root from level10
